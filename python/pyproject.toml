@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wechat-whale-core"
+version = "0.1.0"
+description = "Conversation batching and standard image normalization"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = ["Pillow>=10.3"]
+
+[project.scripts]
+wechat-whale-normalize = "wechat_whale_core.media_normalize:main"
+
+[tool.setuptools]
+packages = ["wechat_whale_core"]
