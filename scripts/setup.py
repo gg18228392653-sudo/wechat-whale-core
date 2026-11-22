@@ -86,7 +86,10 @@ def setup(wechat: bool = False) -> None:
         run(venv / 'Scripts' / 'wechat-whale.exe', '--help')
     print('Running verification', flush=True)
     run(python, '-I', '-B', '-c', INSTALLED_SMOKE)
-    run(node, '--test')
+    node_tests = sorted((ROOT / 'test').glob('*.test.js'))
+    if not node_tests:
+        raise RuntimeError('Project Node.js tests are missing')
+    run(node, '--test', *node_tests)
     run(python, '-I', '-B', '-m', 'unittest', 'discover', '-s', 'python/tests')
     run(node, ROOT / 'examples' / 'group-chat.mjs')
     print('Installation and verification passed')

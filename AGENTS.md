@@ -11,6 +11,6 @@
 ## Core and Tests
 
 - On Linux, macOS, or Windows, run `python scripts/setup.py` with Python 3.10+ and Node.js 20+. Exit code `0` and `Installation and verification passed` identify a passing run.
-- Example: `node examples/group-chat.mjs`. Tests: `node --test` and `.venv/bin/python -B -m unittest discover -s python/tests` or, on Windows, `.venv\Scripts\python.exe -B -m unittest discover -s python/tests`.
+- Example: `node examples/group-chat.mjs`. Tests: `npm test` (`npm.cmd test` on Windows if PowerShell blocks `npm.ps1`) and `.venv/bin/python -B -m unittest discover -s python/tests` or, on Windows, `.venv\Scripts\python.exe -B -m unittest discover -s python/tests`.
 - Keep real messages, IDs, credentials, and private configurations out of committed files and tests.
 - [Windows commands and adapter interface](README.md).

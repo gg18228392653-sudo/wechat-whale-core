@@ -6,6 +6,6 @@
   "engines": { "node": ">=20" },
   "exports": "./src/index.js",
   "files": ["src", "LICENSE", "README.md"],
-  "scripts": { "test": "node --test" },
+  "scripts": { "test": "node --test test/adapter-cli.test.js test/conversation.test.js test/intake-state.test.js test/message-boundary.test.js" },
   "publishConfig": { "access": "public" }
 }
