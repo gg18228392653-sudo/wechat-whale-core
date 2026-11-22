@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict'
 import { assistantReply, conversationPrompt, IntakeState } from '../src/index.js'
 
 const intake = new IntakeState()
@@ -13,9 +14,14 @@ const input = {
   ],
 }
 
-if (receipt.accepted) {
-  const { eligible, prompt, shouldReply } = conversationPrompt(input, { ownerAccountId: 'example-a' })
-  console.log(JSON.stringify({ eligible, shouldReply, prompt }, null, 2))
-  console.log(JSON.stringify({ reply: assistantReply('白饭还有？那本鱼可不潜了') }))
-}
-console.log(JSON.stringify({ replay: intake.accept(batch) }))
+assert.equal(receipt.accepted, true)
+const { eligible, prompt, shouldReply } = conversationPrompt(input, { ownerAccountId: 'example-a' })
+assert.equal(shouldReply, true)
+assert.deepEqual(eligible, ['1', '2'])
+const sample = '白饭还有？那本鱼可不潜了'
+const reply = assistantReply(sample)
+assert.equal(reply, sample)
+assert.equal(assistantReply('[不回]'), '')
+const replay = intake.accept(batch)
+assert.deepEqual(replay, { accepted: false, reason: 'duplicate' })
+console.log(JSON.stringify({ eligible, shouldReply, prompt, reply, replay }, null, 2))

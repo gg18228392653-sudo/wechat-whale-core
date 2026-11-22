@@ -14,16 +14,26 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - run: npm test
+      - name: Verify packaged Node import
+        run: |
+          scratch=$(mktemp -d)
+          trap 'rm -r -- "$scratch"' EXIT
+          archive=$(npm pack --pack-destination "$scratch" --silent)
+          cd "$scratch"
+          npm install --no-audit --no-fund "./$archive"
+          node --input-type=module -e 'import assert from "node:assert/strict"; import { assistantReply, groupDecision } from "wechat-whale-core"; assert.equal(assistantReply("[不回]"), ""); assert.equal(groupDecision({}).shouldReply, false)'
   python:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
         python: ['3.10', '3.12']
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: python -m pip install ./python
-      - run: python -B -m unittest discover -s python/tests
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: python scripts/setup.py
