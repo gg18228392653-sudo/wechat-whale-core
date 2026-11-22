@@ -49,4 +49,6 @@ jobs:
         with:
           node-version: '20'
       - run: python scripts/setup.py --wechat
-      - run: .venv\Scripts\wechat-whale.exe --help
+      - run: .\.venv\Scripts\wechat-whale.exe --help
+        env:
+          PYTHONIOENCODING: cp1252

@@ -1,4 +1,6 @@
+import os
 import shutil
+import subprocess
 import sys
 import threading
 import unittest
@@ -140,6 +142,15 @@ class GroupLoopTests(unittest.TestCase):
         self.assertFalse(args.check)
         self.assertFalse(args.check_send)
         self.assertTrue(arguments(['--group', 'Demo', '--check-send']).check_send)
+
+    def test_help_is_utf8_with_legacy_terminal_encoding(self):
+        python_root = Path(__file__).resolve().parents[1]
+        env = {**os.environ, 'PYTHONIOENCODING': 'cp1252'}
+        result = subprocess.run([sys.executable, '-B', '-m', 'wechat_whale_core.wechat_run', '--help'],
+                                cwd=python_root, env=env, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr.decode('utf-8', errors='replace'))
+        self.assertIn('大肥鱼微信群聊', result.stdout.decode('utf-8'))
+        self.assertIn(b'--check-send', result.stdout)
 
     @unittest.skipUnless(sys.platform == 'win32', 'Windows named mutex')
     def test_instance_lock(self):
