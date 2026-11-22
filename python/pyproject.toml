@@ -10,8 +10,12 @@ requires-python = ">=3.10"
 license = "MIT"
 dependencies = ["Pillow>=10.3"]
 
+[project.optional-dependencies]
+wechat = ["wechatauto-replica==1.2.9; sys_platform == 'win32'"]
+
 [project.scripts]
 wechat-whale-normalize = "wechat_whale_core.media_normalize:main"
+wechat-whale = "wechat_whale_core.wechat_run:main"
 
 [tool.setuptools]
 packages = ["wechat_whale_core"]

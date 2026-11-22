@@ -1,33 +1,51 @@
 # WeChat Whale Core · 大肥鱼
 
-## 安装与运行
+## 微信版
 
-将[仓库链接](https://github.com/gg18228392653-sudo/wechat-whale-core)交给有终端权限的 Agent，并附上这句话：
+**Codex、DSH 或其他有终端权限的 Agent**：在运行微信的 Windows 电脑上打开 Agent，提供本仓库链接和准确群名。
 
-> 克隆这个仓库，按根目录的 AGENTS.md 安装，运行自检，并报告结果。
+> 克隆 https://github.com/gg18228392653-sudo/wechat-whale-core，按根目录 AGENTS.md 的 Windows 微信任务安装大肥鱼。群名是「我的群名」，先运行只读检查，不发送消息。
 
-环境：Git、Node.js 20+、Python 3.10+（含 `venv`、`pip`），以及可访问的 GitHub 和 Python 包索引。安装会下载 Pillow 和 Python 构建依赖。
+环境：Windows x64、已登录的电脑版微信 4.x、Git、Node.js 20+、64 位 Python 3.12（含 `venv` 和 `pip`）、可访问的 GitHub 和 Python 包索引。微信适配器随安装装好，无需另写代码或安装 DSH 插件。
 
-```shell
+```powershell
 git clone https://github.com/gg18228392653-sudo/wechat-whale-core.git
 cd wechat-whale-core
-python scripts/setup.py
+py -3.12 scripts/setup.py --wechat
+.\.venv\Scripts\wechat-whale.exe --group "我的群名" --check
 ```
 
-Windows 也可用 `py -3 scripts/setup.py`；macOS/Linux 用 `python3 scripts/setup.py`。脚本在仓库内创建或复用 `.venv`，安装 Python 包和 Pillow，运行两套测试和群聊示例。退出码为 `0`、最后一行为 `Installation and verification passed` 表示安装通过。Node 部分没有第三方依赖。pip 以隔离模式运行，不读取用户级配置或 `PIP_*` 环境变量。
+`py` 不可用时，用 PATH 中的 64 位 Python 3.12 运行 `python scripts/setup.py --wechat`。`--check` 检查微信账号和唯一同名群能否读取，不使用模型，也不发消息。
 
-安装后可单独运行：
+**预览群回复**：
+
+```powershell
+.\.venv\Scripts\wechat-whale.exe --group "我的群名"
+```
+
+在终端的不回显提示中输入模型 API 密钥。非交互进程从 `WHALE_API_KEY` 读取；密钥不写入仓库。默认模型为 DeepSeek `deepseek-flash`；其他 OpenAI 兼容服务通过 `--base-url` 和 `--model` 指定。选中群的新消息及近期上下文会作为模型输入，服务商可能计费。启动后，在群里新发一条以「大肥鱼，」开头的文字，回复只显示在终端。按 `Ctrl+C` 停止。
+
+**开启发送**：停止预览，在电脑版微信中手动把该群打开为独立聊天窗口，保持主窗口和群窗口可见。
+
+```powershell
+.\.venv\Scripts\wechat-whale.exe --group "我的群名" --check-send
+.\.venv\Scripts\wechat-whale.exe --group "我的群名" --send
+```
+
+`--check-send` 只检查目标群窗口的身份和输入框，不发消息。客户端须能通过 Windows UI Automation 读取该群窗口的标识和空输入框。群名不唯一、群窗不可验证、输入框不可读或有草稿时，运行器拒绝发送。未确认的发送不自动重试。回复以当前登录的微信账号发出；同一 Windows 会话只运行一个实例，其他微信自动回复程序需先停止。预览和发送都调用模型，仅在群成员知情并同意后使用。程序启动时从最新消息开始，不补回离线消息。当前运行器只发文字；图片和表情以类型进入上下文，不做视觉识别。现有依赖下，普通微信 `@` 不作为可靠触发；请用「大肥鱼，」开头的文本。
+
+## 核心库与离线演示
+
+Windows、macOS、Linux：Node.js 20+、Python 3.10+（含 `venv` 和 `pip`）。
 
 ```shell
+python scripts/setup.py
 node examples/group-chat.mjs
-node --test
 ```
 
-示例输入三条合成群消息，前两条是同一人的问话和补充，第三条在和别人说话。输出 `eligible: ["1", "2"]`，重复提交同一批次返回 `duplicate`。示例不调用模型或微信；显示的回复是固定样例。
+macOS/Linux 可用 `python3`。安装脚本在仓库内创建或复用 `.venv`，安装 Python 包，运行测试和合成群聊示例。退出码 `0`、最后一行为 `Installation and verification passed` 表示安装通过。示例不访问微信或模型。
 
-## 接入群聊
-
-本仓库提供群聊核心，不含微信登录、微信收发、客户端自动化或模型服务。真实微信接入需要另备适配器，演示和测试不需要账号或 API 密钥。
+## 自定义适配器
 
 1. 适配器为每个群提供自己的 `messages`、`historyRecords` 和去重键；不把其他群的历史传入。
 2. 调用 `conversationPrompt(input, adapter)`。`shouldReply` 为 `false` 时不调用模型；为 `true` 时只把返回的 `prompt` 交给模型。适配器保留原始 `current`、`history` 和 `eligible`。

@@ -1,16 +1,16 @@
 # Agent Tasks
 
-## Install
+## Windows WeChat
 
-- Required: Git, Node.js 20+, Python 3.10+ with `venv` and `pip`, and access to a Python package index for Pillow and build dependencies.
-- Run `python scripts/setup.py` from the repository root. On Windows, `py -3 scripts/setup.py` is an alternative; on macOS and Linux, use `python3 scripts/setup.py`. The install runs inside `.venv` and does not install system runtimes.
-- Success: exit code `0` and `Installation and verification passed`. The script checks the Python package installed in `.venv`, runs both test suites, and runs the group-chat example.
-- On failure, report the failing command and its error. Do not report a successful installation after a partial run.
+- Run on the same Windows x64 desktop as the user's signed-in WeChat 4.x. Required: Git, Node.js 20+, 64-bit Python 3.12 with `venv` and `pip`, and access to a Python package index.
+- From the checkout root, run `py -3.12 scripts/setup.py --wechat`, or `python scripts/setup.py --wechat` with the required Python on PATH. Installation stays in `.venv`.
+- Use the exact group name supplied by the user. Run `.\.venv\Scripts\wechat-whale.exe --group "exact group name" --check` for a read-only check. Report the actual exit code and any failure. The check does not require a model key.
+- Run without a mode flag only when the user authorizes model use. Preview mode sends the selected group's eligible messages and recent context to the configured model, and displays replies in the terminal without posting to WeChat. The user supplies the API key locally through the no-echo prompt or `WHALE_API_KEY`. Never ask for the key in chat or print it. Use `--base-url` and `--model` when the user specifies another OpenAI-compatible service.
+- Sending requires explicit authorization, a visible standalone window for the specified group, and a successful `--check-send`. Only then run the launcher with `--send`. Do not send test messages without explicit authorization. The user signs in and opens the group window themselves.
 
-## Run
+## Core and Tests
 
-- Group-chat example: `node examples/group-chat.mjs`.
-- Node tests: `node --test`.
-- Python tests: `.venv/bin/python -B -m unittest discover -s python/tests` or, on Windows, `.venv\Scripts\python.exe -B -m unittest discover -s python/tests`.
-- Adapter contract: [README](README.md#接入群聊).
-- These commands are local. Keep actual WeChat messages, credentials, group bindings, and private persona cards out of the repository and test inputs. Installing this library does not authorize signing in to WeChat or sending messages.
+- On Linux, macOS, or Windows, run `python scripts/setup.py` with Python 3.10+ and Node.js 20+. Exit code `0` and `Installation and verification passed` identify a passing run.
+- Example: `node examples/group-chat.mjs`. Tests: `node --test` and `.venv/bin/python -B -m unittest discover -s python/tests` or, on Windows, `.venv\Scripts\python.exe -B -m unittest discover -s python/tests`.
+- Keep real messages, IDs, credentials, and private configurations out of committed files and tests.
+- [Windows commands and adapter interface](README.md).

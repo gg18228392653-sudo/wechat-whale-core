@@ -37,3 +37,16 @@ jobs:
         with:
           node-version: '20'
       - run: python scripts/setup.py
+  wechat-install:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          architecture: 'x64'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: python scripts/setup.py --wechat
+      - run: .venv\Scripts\wechat-whale.exe --help

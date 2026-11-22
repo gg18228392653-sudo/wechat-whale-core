@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import argparse
 import os
+import platform
 from pathlib import Path
 import shlex
 import shutil
@@ -39,9 +41,12 @@ def run(*args: str | Path) -> None:
     subprocess.run([str(arg) for arg in args], cwd=ROOT, check=True)
 
 
-def setup() -> None:
+def setup(wechat: bool = False) -> None:
     if sys.version_info < (3, 10):
         raise RuntimeError('Python 3.10 or newer is required')
+    if wechat and (os.name != 'nt' or platform.machine().lower() not in {'amd64', 'x86_64'}
+                   or sys.maxsize <= 2**32 or sys.version_info[:2] != (3, 12)):
+        raise RuntimeError('WeChat mode requires Windows x64 and 64-bit Python 3.12')
     node = shutil.which('node')
     if not node:
         raise RuntimeError('Node.js 20 or newer is required on PATH')
@@ -60,7 +65,11 @@ def setup() -> None:
         'sys.exit(0 if sys.version_info >= (3, 10) and Path(sys.prefix).resolve() == Path(sys.argv[1]).resolve() '
         'and sys.prefix != sys.base_prefix else "Invalid project virtual environment")', venv)
 
-    print('Installing Python package and Pillow', flush=True)
+    if wechat:
+        run(python, '-I', '-c', 'import sys; sys.exit(0 if sys.version_info[:2] == (3, 12) and '
+            'sys.maxsize > 2**32 else "WeChat mode requires a 64-bit Python 3.12 .venv")')
+
+    print('Installing Python package and dependencies', flush=True)
     with tempfile.TemporaryDirectory(prefix='install-', dir=venv) as staging:
         source = Path(staging)
         for name in ('pyproject.toml', 'LICENSE'):
@@ -68,8 +77,13 @@ def setup() -> None:
         shutil.copytree(ROOT / 'python' / 'wechat_whale_core', source / 'wechat_whale_core',
                         ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
         run(python, '-I', '-m', 'pip', '--isolated', '--require-virtualenv', '--disable-pip-version-check',
-            'install', '--no-cache-dir', source)
+            'install', '--no-cache-dir', str(source) + ('[wechat]' if wechat else ''))
 
+    if wechat:
+        run(python, '-I', '-B', '-c', 'from importlib.metadata import version; import wechatauto; '
+            'assert version("wechatauto-replica") == "1.2.9"; '
+            'assert callable(wechatauto.WeChatGUI)')
+        run(venv / 'Scripts' / 'wechat-whale.exe', '--help')
     print('Running verification', flush=True)
     run(python, '-I', '-B', '-c', INSTALLED_SMOKE)
     run(node, '--test')
@@ -79,8 +93,11 @@ def setup() -> None:
 
 
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--wechat', action='store_true', help='Install the Windows WeChat adapter')
+    args = parser.parse_args()
     try:
-        setup()
+        setup(wechat=args.wechat)
     except subprocess.CalledProcessError as exc:
         command = subprocess.list2cmdline(exc.cmd) if os.name == 'nt' else shlex.join(exc.cmd)
         print(f'Setup failed (exit {exc.returncode}): {command}', file=sys.stderr)
