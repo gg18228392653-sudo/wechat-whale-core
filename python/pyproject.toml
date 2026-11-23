@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "wechat-whale-core"
 version = "0.1.0"
-description = "Conversation batching and standard image normalization"
+description = "WeChat conversation routing, batching, and media normalization"
 requires-python = ">=3.10"
 license = "MIT"
 dependencies = ["Pillow>=10.3"]

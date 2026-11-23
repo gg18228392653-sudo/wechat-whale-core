@@ -49,11 +49,13 @@ node examples/group-chat.mjs
 
 macOS/Linux 可用 `python3`。安装脚本在仓库内创建或复用 `.venv`，安装 Python 包，运行测试和合成群聊示例。退出码 `0`、最后一行为 `Installation and verification passed` 表示安装通过。示例不访问微信或模型。
 
-## 自定义适配器
+## Node API
 
-1. 适配器为每个群提供自己的 `messages`、`historyRecords` 和去重键；不把其他群的历史传入。
-2. 调用 `conversationPrompt(input, adapter)`。`shouldReply` 为 `false` 时不调用模型；为 `true` 时只把返回的 `prompt` 交给模型。适配器保留原始 `current`、`history` 和 `eligible`。
-3. 用 `assistantReply` 过滤模型的最终文本。返回空字符串时不发送；非空文本由接入端负责发送。`IntakeState` 的去重数据存于内存，重启后清空。
+群聊接入按群隔离 `messages`、`historyRecords` 和去重键。调用 `conversationPrompt(input, adapter)`，仅在 `shouldReply` 为 `true` 时把 `prompt` 交给模型。
+
+私聊接入调用 `privatePrompt(input, contactId)`。它只保留登录账号和指定联系人的记录，当前消息由联系人发出时加入 `eligible`，不需要 @ 或群聊唤醒词。
+
+`assistantReply` 过滤模型最终文本；返回空字符串时不发送。`IntakeState` 的去重数据存于内存，重启后清空。
 
 既有 Node 项目可在项目目录直接安装：
 
@@ -69,6 +71,12 @@ const { shouldReply, eligible } = conversationPrompt({
   messages: [{ id: '1', senderId: 'demo-user', text: '大肥鱼，在吗？', mentions: ['demo-bot'] }],
 })
 console.log(shouldReply, eligible) // true [ '1' ]
+
+const privateResult = privatePrompt({
+  selfId: 'demo-bot',
+  messages: [{ id: '2', senderId: 'demo-contact', text: '你好' }],
+}, 'demo-contact')
+console.log(privateResult.shouldReply, privateResult.eligible) // true [ '2' ]
 ```
 
 Python 图片接口接收本地文件和输出目录：
@@ -87,7 +95,7 @@ print(result['path'])
 | 模块 | 接口 | 运行环境 |
 | --- | --- | --- |
 | 群聊接话判断 | `groupDecision(input)` | Node.js 20+ |
-| 大肥鱼群聊人格与提示 | `WHALE_PERSONA`、`conversationPrompt(input, adapter)` | Node.js 20+ |
+| 大肥鱼人格与提示 | `WHALE_PERSONA`、`PRIVATE_PERSONA`、`conversationPrompt(input, adapter)`、`privatePrompt(input, contactId)` | Node.js 20+ |
 | 群聊文本过滤 | `assistantReply(message)`、`containsInternalOutput(value)` | Node.js 20+ |
 | 按群去重与消息水位 | `IntakeState.accept({ chatId, batchId, sequence })`、`IntakeState.isStale(chatId, sequence)` | Node.js 20+ |
 | 混合消息合批 | `wechat_whale_core.conversation_batch.collect_batch` | Python 3.10+ |
@@ -106,7 +114,7 @@ print(result['path'])
 | `quote` | `{ senderId, text }`，可省略 |
 | `media` | `{ kind }` 数组，可省略 |
 
-`groupDecision` 返回 `current`、`history`、`eligible`、`shouldReply`。`conversationPrompt` 另返回 `prompt`；提示中的发言人以当次请求的代号表示。`adapter.ownerAccountId` 来自接入端已核实的账号；群消息正文里的自称与昵称均不参与认人。
+`groupDecision` 返回 `current`、`history`、`eligible`、`shouldReply`。`conversationPrompt` 和 `privatePrompt` 另返回 `prompt`；提示中的发言人以当次请求的代号表示。`adapter.ownerAccountId` 来自接入端已核实的账号；群消息正文里的自称与昵称均不参与认人。
 
 [合成群聊示例](examples/group-chat.mjs) · [Node.js 测试](test/) · [Python 测试](python/tests/) · [MIT 许可证](LICENSE)
 

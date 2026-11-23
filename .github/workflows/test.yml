@@ -21,7 +21,7 @@ jobs:
           archive=$(npm pack --pack-destination "$scratch" --silent)
           cd "$scratch"
           npm install --no-audit --no-fund "./$archive"
-          node --input-type=module -e 'import assert from "node:assert/strict"; import { assistantReply, groupDecision } from "wechat-whale-core"; assert.equal(assistantReply("[不回]"), ""); assert.equal(groupDecision({}).shouldReply, false)'
+          node --input-type=module -e 'import assert from "node:assert/strict"; import { assistantReply, groupDecision, privatePrompt, PRIVATE_PERSONA } from "wechat-whale-core"; assert.equal(assistantReply("[不回]"), ""); assert.equal(groupDecision({}).shouldReply, false); assert.equal(privatePrompt({ selfId: "demo", messages: [] }, "peer").shouldReply, false); assert.equal(typeof PRIVATE_PERSONA, "string")'
   python:
     runs-on: ${{ matrix.os }}
     strategy:
