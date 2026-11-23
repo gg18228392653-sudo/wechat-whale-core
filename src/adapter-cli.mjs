@@ -1,4 +1,5 @@
 import { assistantReply, conversationPrompt } from './index.js'
+import { privatePrompt } from './conversation.js'
 
 const MAX_STDIN = 2 * 1024 * 1024
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -18,7 +19,7 @@ async function readInput() {
 
 async function main() {
   const operation = process.argv[2]
-  if (process.argv.length !== 3 || (operation !== 'prepare' && operation !== 'reply')) {
+  if (process.argv.length !== 3 || !['prepare', 'prepare-private', 'reply'].includes(operation)) {
     throw new Error('Invalid operation')
   }
 
@@ -26,6 +27,11 @@ async function main() {
   if (operation === 'prepare' && hasFields(payload, 'input', 'adapter') &&
       isObject(payload.input) && isObject(payload.adapter)) {
     const { shouldReply, prompt, eligible } = conversationPrompt(payload.input, payload.adapter)
+    return { shouldReply, prompt, eligible }
+  }
+  if (operation === 'prepare-private' && hasFields(payload, 'input', 'contactId') &&
+      isObject(payload.input) && typeof payload.contactId === 'string') {
+    const { shouldReply, prompt, eligible } = privatePrompt(payload.input, payload.contactId)
     return { shouldReply, prompt, eligible }
   }
   if (operation === 'reply' && hasFields(payload, 'message') &&

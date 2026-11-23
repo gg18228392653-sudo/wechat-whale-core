@@ -31,7 +31,7 @@ def checkout_root() -> Path:
 def core_call(node: str, operation: str, payload: dict[str, Any]) -> dict[str, Any]:
     encoded = json.dumps(payload, ensure_ascii=False).encode('utf-8')
     if len(encoded) > REQUEST_LIMIT:
-        raise RuntimeError('群聊请求超过大小限制')
+        raise RuntimeError('聊天请求超过大小限制')
     env = dict(os.environ)
     env.pop(KEY_ENV, None)
     env.pop('NODE_OPTIONS', None)
@@ -43,17 +43,19 @@ def core_call(node: str, operation: str, payload: dict[str, Any]) -> dict[str, A
         )
         value = json.loads(result.stdout)
     except (subprocess.SubprocessError, OSError, ValueError) as exc:
-        raise RuntimeError('群聊核心执行失败') from exc
+        raise RuntimeError('聊天核心执行失败') from exc
     if not isinstance(value, dict):
-        raise RuntimeError('群聊核心返回了无效数据')
+        raise RuntimeError('聊天核心返回了无效数据')
     return value
 
 
 class GroupLoop:
     def __init__(self, adapter: Any, core: Callable, complete: Callable, *, send: bool = False,
                  owner_id: str = '', stop: threading.Event | None = None,
-                 collector: Callable = collect_batch, report: Callable[[str], None] = print):
+                 private: bool = False, collector: Callable = collect_batch,
+                 report: Callable[[str], None] = print):
         self.adapter = adapter
+        self.private = private
         self.core = core
         self.complete = complete
         self.send = send
@@ -108,7 +110,8 @@ class GroupLoop:
         else:
             return True
 
-        batch = self.collector(first, self._read, stop=self.stop, is_allowed=self._unseen)
+        batch = self.collector(first, self._read, stop=self.stop, is_allowed=self._unseen,
+                               is_group=not self.private)
         self._advance(batch)
         current = [item for row in batch if (item := self.adapter.project(row)) is not None]
         input_data = {'selfId': self.adapter.self_id, 'selfName': self.adapter.self_name,
@@ -116,12 +119,15 @@ class GroupLoop:
         self.history.extend(current)
         if self.stop.is_set():
             return True
-        decision = self.core('prepare', {'input': input_data, 'adapter': {'ownerAccountId': self.owner_id}})
+        if self.private:
+            decision = self.core('prepare-private', {'input': input_data, 'contactId': self.adapter.chat_id})
+        else:
+            decision = self.core('prepare', {'input': input_data, 'adapter': {'ownerAccountId': self.owner_id}})
         if decision.get('shouldReply') is not True:
             return True
         prompt = decision.get('prompt')
         if not isinstance(prompt, str) or not prompt:
-            raise RuntimeError('群聊核心未返回有效提示')
+            raise RuntimeError('聊天核心未返回有效提示')
         try:
             output = self.complete(prompt)
         except RuntimeError:
@@ -134,7 +140,7 @@ class GroupLoop:
             self.report(f'预览：{reply}')
             return True
         if any(self._unseen(row) for row in self._read(max(self.initial_cursor, self.cursor - 1), READER_LIMIT)):
-            self.report('群里有新消息，本批旧回复不发送')
+            self.report('目标会话有新消息，已跳过上一批回复')
             return True
         if self.stop.is_set():
             return True
@@ -174,13 +180,15 @@ def session_lock():
 
 
 def arguments(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog='wechat-whale', description='大肥鱼微信群聊')
-    parser.add_argument('--group', required=True, help='精确的微信群名')
+    parser = argparse.ArgumentParser(prog='wechat-whale', description='大肥鱼微信聊天')
+    target = parser.add_mutually_exclusive_group(required=True)
+    target.add_argument('--group', help='精确的微信群名')
+    target.add_argument('--contact', help='私聊联系人的精确备注、昵称或稳定账号标识')
     parser.add_argument('--base-url', default=os.getenv('WHALE_BASE_URL', 'https://api.deepseek.com'))
     parser.add_argument('--model', default=os.getenv('WHALE_MODEL', 'deepseek-flash'))
     mode = parser.add_mutually_exclusive_group()
-    mode.add_argument('--check', action='store_true', help='仅检查微信和群，不请求模型或发送')
-    mode.add_argument('--check-send', action='store_true', help='仅检查目标群的发送窗口，不请求模型或发送')
+    mode.add_argument('--check', action='store_true', help='只读检查微信和目标会话')
+    mode.add_argument('--check-send', action='store_true', help='只读检查目标会话的发送窗口')
     mode.add_argument('--send', action='store_true', help='允许发送；默认仅在终端预览')
     return parser.parse_args(argv)
 
@@ -197,14 +205,15 @@ def main(argv: list[str] | None = None) -> int:
         from .wechat_adapter import WeChatAdapter
 
         with session_lock():
-            adapter = WeChatAdapter(args.group)
+            private = args.contact is not None
+            adapter = WeChatAdapter(contact=args.contact) if private else WeChatAdapter(args.group)
             if args.check or args.check_send:
                 adapter.latest_sequence()
                 if args.check_send:
                     adapter.check_send_ready()
-                    print('目标群及发送输入框已校验。未发送消息。')
+                    print('目标会话及发送输入框已校验。未发送消息。')
                 else:
-                    print('目标群唯一且可读。未发送消息。')
+                    print('目标会话唯一且可读。未发送消息。')
                 return 0
             checkout_root()
             node = shutil.which('node')
@@ -222,7 +231,7 @@ def main(argv: list[str] | None = None) -> int:
             loop = GroupLoop(
                 adapter, lambda operation, payload: core_call(node, operation, payload),
                 lambda prompt: complete_chat(args.base_url, args.model, key, prompt),
-                send=args.send, owner_id=os.getenv('WHALE_OWNER_ID', ''),
+                send=args.send, private=private, owner_id=os.getenv('WHALE_OWNER_ID', ''),
                 report=lambda text: print(text, flush=True),
             )
             print('监听已启动：' + ('实际发送' if args.send else '预览，不发送'), flush=True)

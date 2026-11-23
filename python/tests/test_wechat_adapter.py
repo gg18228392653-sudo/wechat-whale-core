@@ -1,3 +1,4 @@
+import sqlite3
 import sys
 import unittest
 from types import ModuleType, SimpleNamespace
@@ -91,7 +92,7 @@ class AdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "group changed"):
             adapter.latest_sequence()
         self.assertFalse(adapter.send_text("Example reply"))
-        with self.assertRaisesRegex(RuntimeError, "standalone group window"):
+        with self.assertRaisesRegex(RuntimeError, "standalone chat window"):
             adapter.check_send_ready()
         self.db.get_self_info.return_value = {"username": "wxid_other_account"}
         with self.assertRaisesRegex(RuntimeError, "account changed"):
@@ -196,20 +197,130 @@ class AdapterTests(unittest.TestCase):
         self.gui.send_msg.assert_not_called()
 
 
+class ContactAdapterTests(unittest.TestCase):
+    CONTACT = "wxid_demo_contact"
+    NICK = "Example nickname"
+    REMARK = "Example remark"
+
+    def setUp(self):
+        self.runtime = FakeRuntime()
+        self.db = self.runtime.db
+        self.contacts = [(self.CONTACT, self.NICK, self.REMARK, 1, 0)]
+        self.db._contact_conn.side_effect = self.contact_connection
+
+    def contact_connection(self):
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE contact (username TEXT COLLATE NOCASE, "
+                     "nick_name TEXT COLLATE NOCASE, remark TEXT COLLATE NOCASE, local_type, verify_flag)")
+        conn.executemany("INSERT INTO contact VALUES (?, ?, ?, ?, ?)", self.contacts)
+        return conn
+
+    def adapter(self, selector=None):
+        with patch.object(module, "_load_backend", return_value=self.runtime.backend):
+            return module.WeChatAdapter(contact=self.REMARK if selector is None else selector)
+
+    def test_contact_selectors_are_exact(self):
+        with patch.object(module, "_load_backend") as backend:
+            for args, kwargs in (((GROUP,), {"contact": self.REMARK}), ((), {"contact": " "}),
+                                 ((), {"contact": 123}), ((), {})):
+                with self.assertRaises(ValueError):
+                    module.WeChatAdapter(*args, **kwargs)
+            backend.assert_not_called()
+        for selector in (self.REMARK, self.NICK, self.CONTACT):
+            with self.subTest(selector=selector):
+                adapter = self.adapter(selector)
+                self.assertEqual((adapter.chat_id, adapter.self_id), (self.CONTACT, SELF))
+                self.assertEqual(adapter.latest_sequence(), 0)
+                self.db.get_messages.assert_called_with(self.CONTACT, limit=1)
+                self.db.get_new_messages.return_value = [message(2, sender=self.CONTACT)]
+                self.assertEqual(adapter.read_after(1, 2)[0]["username"], self.CONTACT)
+                adapter.check_send_ready()
+                self.runtime.backend.sender.assert_called_with(self.REMARK, self.CONTACT, SELF)
+        for selector in ("Example", self.NICK.lower(), "%", "example_alias"):
+            with self.assertRaisesRegex(RuntimeError, "exactly one verified person"):
+                self.adapter(selector)
+        self.db.search_contact.assert_not_called()
+        self.db.get_groups.assert_not_called()
+
+    def test_collisions_and_non_people_are_rejected(self):
+        original = self.contacts[0]
+        for selector, collision in ((self.REMARK, (OTHER, self.REMARK, None, 1, 0)),
+                                    (self.CONTACT, (OTHER, "Other", self.CONTACT, 1, 0)),
+                                    (self.NICK, (CHAT, self.NICK, None, 2, 0)), (self.NICK, original)):
+            with self.subTest(selector=selector, collision=collision):
+                self.contacts[:] = [original, collision]
+                with self.assertRaisesRegex(RuntimeError, "exactly one verified person"):
+                    self.adapter(selector)
+        for username, local_type, flag in (("filehelper", 1, 0), ("weixin", 1, 0), ("gh_demo", 3, 0),
+                                           ("biz_demo", 3, 0), ("demo@openim", 1, 0), (CHAT, 2, 0),
+                                           (SELF, 1, 0), ("123", 1, 0), (self.CONTACT, 0, 0),
+                                           (self.CONTACT, 3, 8), (self.CONTACT, 1, None)):
+            self.contacts[:] = [(username, self.NICK, self.REMARK, local_type, flag)]
+            with self.subTest(username=username, local_type=local_type, flag=flag):
+                with self.assertRaisesRegex(RuntimeError, "exactly one verified person"):
+                    self.adapter()
+        self.db._contact_conn.side_effect = sqlite3.OperationalError("unavailable schema")
+        with self.assertRaisesRegex(RuntimeError, "exactly one verified person"):
+            self.adapter()
+        self.db.get_messages.assert_not_called()
+        self.runtime.backend.sender.assert_not_called()
+
+    def test_contact_and_account_are_pinned(self):
+        adapter = self.adapter()
+        self.contacts[:] = [(OTHER, self.NICK, self.REMARK, 1, 0)]
+        with self.assertRaisesRegex(RuntimeError, "contact changed"):
+            adapter.latest_sequence()
+        self.assertFalse(adapter.send_text("Example reply"))
+        self.db.get_self_info.return_value = {"username": "wxid_other_account"}
+        with self.assertRaisesRegex(RuntimeError, "account changed"):
+            adapter.read_after(0, 1)
+        with self.assertRaisesRegex(RuntimeError, "standalone chat window"):
+            adapter.check_send_ready()
+        self.db.get_messages.assert_not_called()
+        self.db.get_new_messages.assert_not_called()
+        self.runtime.backend.sender.assert_not_called()
+
+    def test_projection_and_confirmation_use_real_participant_ids(self):
+        adapter = self.adapter(self.CONTACT)
+        raw = message(username=self.CONTACT, sender=self.CONTACT, sender_id=2, content="大肥鱼，你好")
+        self.assertEqual(adapter.project(raw), {"id": "local:fixture:1", "senderId": self.CONTACT,
+                         "text": "大肥鱼，你好", "mentions": [], "self": False, "time": 1700000000})
+        self.assertEqual(adapter.project({**raw, "mentions": [SELF]})["mentions"], [])
+        self.assertTrue(adapter.project({**raw, "sender_username": SELF, "sender_id": 5})["self"])
+        for sender in (OTHER, "2", "", "filehelper", CHAT):
+            self.assertIsNone(adapter.project({**raw, "sender_username": sender, "senderId": SELF}))
+        for sender, chat, expected in ((SELF, self.CONTACT, True), (self.CONTACT, self.CONTACT, False),
+                                       (SELF, OTHER, False)):
+            self.db.get_messages.side_effect = [[], [message(username=chat, sender=sender, content="Example reply")]]
+            self.assertIs(adapter.send_text("Example reply"), expected)
+            self.runtime.backend.sender.assert_called_with(self.REMARK, self.CONTACT, SELF)
+            self.runtime.gui.send_msg.assert_called_with("Example reply", who=self.CONTACT, verify=True)
+
+
 class WindowsBindingTests(unittest.TestCase):
     def test_standalone_class_pid_title_and_native_id_are_all_required(self):
+        self.check_standalone_binding(GROUP, CHAT)
+
+    def test_private_standalone_has_no_other_window_or_search_fallback(self):
+        self.check_standalone_binding(ContactAdapterTests.REMARK, ContactAdapterTests.CONTACT, private=True)
+
+    def check_standalone_binding(self, title, chat, *, private=False):
         def node(hwnd, kind, title, aid=""):
             return SimpleNamespace(NativeWindowHandle=hwnd, ClassName=f"mmui::{kind}",
                                    Name=title, AutomationId=aid)
 
         main = node(1, "MainWindow", "Client")
-        exact = node(2, "ChatSingleWindow", GROUP, "ChatSingleWindow" + CHAT)
-        wrong_id = node(3, "ChatSingleWindow", GROUP, "ChatSingleWindow999@chatroom")
-        wrong_pid = node(4, "ChatSingleWindow", GROUP, "ChatSingleWindow" + CHAT)
-        wrong_title = node(5, "ChatSingleWindow", GROUP + " suffix", "ChatSingleWindow" + CHAT)
-        history = node(6, "SearchMsgUniqueChatWindow", GROUP, "ChatSingleWindow" + CHAT)
+        exact = node(2, "ChatSingleWindow", title, "ChatSingleWindow" + chat)
+        wrong_id = node(3, "ChatSingleWindow", title, "ChatSingleWindow" + OTHER)
+        wrong_pid = node(4, "ChatSingleWindow", title, "ChatSingleWindow" + chat)
+        wrong_title = node(5, "ChatSingleWindow", title + " suffix", "ChatSingleWindow" + chat)
+        history = node(6, "SearchMsgUniqueChatWindow", title, "ChatSingleWindow" + chat)
         nodes = [wrong_id, wrong_pid, wrong_title, history]
         runtime = FakeRuntime()
+        if private:
+            fixture = ContactAdapterTests()
+            fixture.setUp()
+            runtime = fixture.runtime
         actions = []
         field = SimpleNamespace(value="Example reply", ready_value="", foreground=2)
         activations = []
@@ -229,6 +340,8 @@ class WindowsBindingTests(unittest.TestCase):
                 driver = self._get_uia()
                 if not driver:
                     return SimpleNamespace(is_success=False)
+                if driver.open_chat(OTHER) or not driver.open_chat(who):
+                    raise AssertionError("unverified chat route")
                 mark = self._send_watermark(who)
                 if not driver.ensure_window():
                     return SimpleNamespace(is_success=False)
@@ -283,15 +396,15 @@ class WindowsBindingTests(unittest.TestCase):
         }
         with patch.dict(sys.modules, modules), patch.object(sys, "platform", "win32"), \
                 patch.object(module, "version", return_value="1.2.9"), patch.object(module.logging, "getLogger"):
-            adapter = module.WeChatAdapter(GROUP)
-            with self.assertRaisesRegex(RuntimeError, "standalone group window"):
+            adapter = module.WeChatAdapter(contact=chat) if private else module.WeChatAdapter(title)
+            with self.assertRaisesRegex(RuntimeError, "standalone chat window"):
                 adapter.check_send_ready()
             self.assertFalse(adapter.send_text("Example reply"))
             self.assertEqual(actions, [])
             nodes.append(exact)
             for unreadable_or_draft in (None, "Unsent draft"):
                 field.ready_value = unreadable_or_draft
-                with self.assertRaisesRegex(RuntimeError, "standalone group window"):
+                with self.assertRaisesRegex(RuntimeError, "standalone chat window"):
                     adapter.check_send_ready()
                 self.assertFalse(adapter.send_text("Example reply"))
                 self.assertEqual(field.ready_value, unreadable_or_draft)
@@ -310,9 +423,9 @@ class WindowsBindingTests(unittest.TestCase):
             landed = message(sender=SELF, sender_id=4, content="Example reply")
             runtime.db.get_messages.side_effect = [[], [], [landed], [landed]]
             self.assertTrue(adapter.send_text("Example reply"))
-            self.assertEqual(actions, [(2, CHAT, True)])
-            nodes.append(node(7, "ChatSingleWindow", GROUP, "ChatSingleWindow" + CHAT))
-            with self.assertRaisesRegex(RuntimeError, "standalone group window"):
+            self.assertEqual(actions, [(2, chat, True)])
+            nodes.append(node(7, "ChatSingleWindow", title, "ChatSingleWindow" + chat))
+            with self.assertRaisesRegex(RuntimeError, "standalone chat window"):
                 adapter.check_send_ready()
 
 

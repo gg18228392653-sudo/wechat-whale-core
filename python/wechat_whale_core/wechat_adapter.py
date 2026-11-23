@@ -5,9 +5,10 @@ import logging
 import re
 import sys
 from collections.abc import Mapping
-from contextlib import redirect_stderr
+from contextlib import closing, redirect_stderr
 from importlib.metadata import version
 from pathlib import PureWindowsPath
+from sqlite3 import DatabaseError
 from xml.etree import ElementTree
 
 
@@ -15,8 +16,15 @@ _MEDIA = {"图片": "image", "动画表情": "sticker", "文件/链接/卡片": 
           "语音": "audio", "视频": "video"}
 _VOCATIVE = re.compile(r"^大肥鱼(?:$|[，。！？、,:：!?])")
 _ID = re.compile(r"[A-Za-z0-9_@.\-]{1,128}\Z")
-_WINDOW_ERROR = "The exact standalone group window is unavailable."
+_WINDOW_ERROR = "The exact standalone chat window is unavailable."
+_CONTACT_ERROR = "The contact did not match exactly one verified person."
 _CONFIRM_LIMIT = 64
+_NON_PERSON_IDS = frozenset({
+    "appbrandcustomerservicemsg", "brandsessionholder", "floatbottle", "filehelper",
+    "fmessage", "medianote", "message_fold", "newsapp", "notification_messages",
+    "officialaccounts", "qqmail", "qqsync", "qy_sessionholder", "readerapp",
+    "shakeapp", "tmessage", "weibo", "weixin", "weixinreminder", "wxitil", "wxpay",
+})
 
 
 def _identifier(value) -> str:
@@ -91,16 +99,20 @@ def _confirmed(rows: list[dict], mark: tuple[int, set, bool], chat_id: str, self
         if (row.get("username", chat_id) == chat_id and key is not None and key not in seen
                 and (_seq(row) > cutoff or (allow_equal and _seq(row) == cutoff))
                 and row.get("type") == "文本" and row.get("sender_username") == self_id
-                and _body(row, self_id) == text):
+                and _body(row, self_id if chat_id.endswith("@chatroom") else "") == text):
             return True
     return False
 
 
 class WeChatAdapter:
-    def __init__(self, group: str):
-        if not isinstance(group, str) or not group.strip() or group != group.strip():
-            raise ValueError("An exact group name is required.")
-        self._group = group
+    def __init__(self, group: str | None = None, *, contact: str | None = None):
+        if group is not None and contact is not None:
+            raise ValueError("Specify only one group or contact.")
+        self._group, self._contact = group, contact
+        target = group if contact is None else contact
+        if not isinstance(target, str) or not target or target != target.strip():
+            raise ValueError("An exact group name is required." if contact is None
+                             else "An exact contact name or account ID is required.")
         self._backend = _load_backend()
         db = self._backend.database()
         info = db.get_self_info()
@@ -109,7 +121,7 @@ class WeChatAdapter:
             raise RuntimeError("The logged-in account could not be verified.")
         name = info.get("nick_name")
         self._self_name = name if isinstance(name, str) else ""
-        self._chat_id = self._resolve_group(db)
+        self._chat_id, self._window_title = self._resolve_target(db)
 
     @property
     def self_id(self) -> str:
@@ -144,12 +156,49 @@ class WeChatAdapter:
         )
         return chat_id
 
+    def _resolve_target(self, db) -> tuple[str, str]:
+        if self._contact is None:
+            return self._resolve_group(db), self._group
+
+        if self._contact.casefold() in _NON_PERSON_IDS:
+            raise RuntimeError(_CONTACT_ERROR)
+        try:
+            connection = db._contact_conn()
+            if connection is None:
+                raise RuntimeError(_CONTACT_ERROR)
+            with closing(connection):
+                rows = connection.execute(
+                    "SELECT username, nick_name, remark, local_type, verify_flag FROM contact "
+                    "WHERE username COLLATE BINARY = ? OR nick_name COLLATE BINARY = ? "
+                    "OR remark COLLATE BINARY = ? LIMIT 2",
+                    (self._contact,) * 3,
+                ).fetchall()
+        except DatabaseError:
+            raise RuntimeError(_CONTACT_ERROR) from None
+        if len(rows) != 1:
+            raise RuntimeError(_CONTACT_ERROR)
+        username, nickname, remark, local_type, verify_flag = rows[0]
+        chat_id = _sender(username)
+        title = remark or nickname
+        lowered = chat_id.lower()
+        if (not chat_id or lowered == self.self_id.lower() or lowered in _NON_PERSON_IDS
+                or lowered.startswith(("gh_", "biz_"))
+                or type(local_type) is not int or local_type not in (1, 3)
+                or type(verify_flag) is not int or verify_flag != 0
+                or any(name is not None and not isinstance(name, str) for name in (remark, nickname))
+                or not title or not title.strip()):
+            raise RuntimeError(_CONTACT_ERROR)
+        return chat_id, title
+
     def _checked_database(self):
         db = self._backend.database()
         if db.get_self_info().get("username") != self.self_id:
             raise RuntimeError("The logged-in account changed.")
-        if self._resolve_group(db) != self.chat_id:
-            raise RuntimeError("The configured group changed.")
+        chat_id, title = self._resolve_target(db)
+        if chat_id != self.chat_id:
+            raise RuntimeError("The configured group changed." if self._contact is None
+                               else "The configured contact changed.")
+        self._window_title = title
         return db
 
     def latest_sequence(self) -> int:
@@ -176,7 +225,7 @@ class WeChatAdapter:
     def check_send_ready(self) -> None:
         try:
             self._checked_database()
-            self._backend.sender(self._group, self.chat_id, self.self_id)
+            self._backend.sender(self._window_title, self.chat_id, self.self_id)
         except Exception:
             raise RuntimeError(_WINDOW_ERROR) from None
 
@@ -186,7 +235,7 @@ class WeChatAdapter:
         try:
             db = self._checked_database()
             mark = _watermark(db.get_messages(self.chat_id, limit=_CONFIRM_LIMIT), self.chat_id)
-            gui = self._backend.sender(self._group, self.chat_id, self.self_id)
+            gui = self._backend.sender(self._window_title, self.chat_id, self.self_id)
             response = gui.send_msg(text, who=self.chat_id, verify=True)
             if getattr(response, "is_success", None) is not True:
                 return False
@@ -194,7 +243,6 @@ class WeChatAdapter:
             return _confirmed(rows, mark, self.chat_id, self.self_id, text)
         except Exception:
             return False
-        return False
 
     def project(self, row: Mapping) -> dict | None:
         if not isinstance(row, Mapping) or row.get("username") != self.chat_id:
@@ -202,6 +250,10 @@ class WeChatAdapter:
         sender = _sender(row.get("sender_username"))
         kind = row.get("type")
         if not sender or not isinstance(kind, str):
+            return None
+        private = self._contact is not None
+        participants = (self.chat_id, self.self_id)
+        if private and sender not in participants:
             return None
         server_id = row.get("server_id")
         key = _row_key(row)
@@ -214,7 +266,7 @@ class WeChatAdapter:
             message_id = f"local:{key[0]}:{key[1]}"
         else:
             return None
-        text = _body(row, sender).strip()
+        text = _body(row, "" if private else sender).strip()
         quote = {}
         media = []
         plain = kind == "文本"
@@ -223,7 +275,7 @@ class WeChatAdapter:
             if isinstance(raw_quote, Mapping):
                 quote_sender = _sender(raw_quote.get("senderId"))
                 quote_text = raw_quote.get("text")
-                if quote_sender:
+                if quote_sender and (not private or quote_sender in participants):
                     quote["senderId"] = quote_sender
                 if isinstance(quote_text, str) and quote_text.strip():
                     quote["text"] = quote_text.strip()
@@ -239,14 +291,15 @@ class WeChatAdapter:
             return None
         if not (text or quote or media):
             return None
-        raw_mentions = row.get("mentions")
         mentions = []
-        if isinstance(raw_mentions, (list, tuple)) and len(raw_mentions) <= 64:
-            mentions = list(dict.fromkeys(name for value in raw_mentions if (name := _sender(value))))
         own = sender == self.self_id
-        if (not own and plain and raw_mentions is None and self._vocative_clear and "@" not in text
-                and "＠" not in text and "<" not in text and _VOCATIVE.match(text)):
-            mentions = [self.self_id]
+        if not private:
+            raw_mentions = row.get("mentions")
+            if isinstance(raw_mentions, (list, tuple)) and len(raw_mentions) <= 64:
+                mentions = list(dict.fromkeys(name for value in raw_mentions if (name := _sender(value))))
+            if (not own and plain and raw_mentions is None and self._vocative_clear and "@" not in text
+                    and "＠" not in text and "<" not in text and _VOCATIVE.match(text)):
+                mentions = [self.self_id]
         result = {"id": message_id, "senderId": sender, "text": text, "mentions": mentions, "self": own}
         stamp = row.get("create_time")
         if type(stamp) is int and stamp > 0:
@@ -304,6 +357,9 @@ def _load_backend():
             return (self.matches(self._find_main())
                     and super().ensure_window(wake=False, timeout=timeout)
                     and self.matches(self._win))
+
+        def open_chat(self, keyword):
+            return keyword == self.target and self.ensure_window()
 
         def _paste_landed(self, ctrl, text):
             actual = self._read_edit_value(ctrl)

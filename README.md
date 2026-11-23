@@ -2,37 +2,41 @@
 
 ## 微信版
 
-**Codex、DSH 或其他有终端权限的 Agent**：在运行微信的 Windows 电脑上打开 Agent，提供本仓库链接和准确群名。
+### Codex、DSH 和其他 Agent
 
-> 克隆 https://github.com/gg18228392653-sudo/wechat-whale-core，按根目录 AGENTS.md 的 Windows 微信任务安装大肥鱼。群名是「我的群名」，先运行只读检查，不发送消息。
+Agent 操作清单见 [AGENTS.md](AGENTS.md)。在运行微信的 Windows 电脑上提交一条任务，替换引号内的目标名称。
 
-环境：Windows x64、已登录的电脑版微信 4.x、Git、Node.js 20+、64 位 Python 3.12（含 `venv` 和 `pip`）、可访问的 GitHub 和 Python 包索引。微信适配器随安装装好，无需另写代码或安装 DSH 插件。
+> 克隆 https://github.com/gg18228392653-sudo/wechat-whale-core，按仓库根目录 AGENTS.md 安装 Windows 微信版。我要群聊，群名是「我的群名」。先执行 `--check`。
+
+> 克隆 https://github.com/gg18228392653-sudo/wechat-whale-core，按仓库根目录 AGENTS.md 安装 Windows 微信版。我要私聊，联系人备注是「我的联系人」。先执行 `--check`。
+
+### 安装
+
+环境要求为 Windows x64、已登录的电脑版微信 4.x、Git、Node.js 20+、64 位 Python 3.12（含 `venv` 和 `pip`）、可访问的 GitHub 和 Python 包索引。安装包含微信适配器和模型接口。
 
 ```powershell
 git clone https://github.com/gg18228392653-sudo/wechat-whale-core.git
 cd wechat-whale-core
 py -3.12 scripts/setup.py --wechat
-.\.venv\Scripts\wechat-whale.exe --group "我的群名" --check
 ```
 
-`py` 不可用时，用 PATH 中的 64 位 Python 3.12 运行 `python scripts/setup.py --wechat`。`--check` 检查微信账号和唯一同名群能否读取，不使用模型，也不发消息。
+64 位 Python 3.12 已在 PATH 中时，也可执行 `python scripts/setup.py --wechat`。已有旧版时，先停止运行中的大肥鱼，在原仓库执行 `git pull --ff-only`，再运行安装命令更新启动器。
 
-**预览群回复**：
+### 群聊与私聊命令
 
-```powershell
-.\.venv\Scripts\wechat-whale.exe --group "我的群名"
-```
+| 模式 | 群聊 | 私聊 |
+| --- | --- | --- |
+| 只读自检 | `.\.venv\Scripts\wechat-whale.exe --group "我的群名" --check` | `.\.venv\Scripts\wechat-whale.exe --contact "我的联系人" --check` |
+| 回复预览 | `.\.venv\Scripts\wechat-whale.exe --group "我的群名"` | `.\.venv\Scripts\wechat-whale.exe --contact "我的联系人"` |
+| 发送前检查 | `.\.venv\Scripts\wechat-whale.exe --group "我的群名" --check-send` | `.\.venv\Scripts\wechat-whale.exe --contact "我的联系人" --check-send` |
+| 正式发送 | `.\.venv\Scripts\wechat-whale.exe --group "我的群名" --send` | `.\.venv\Scripts\wechat-whale.exe --contact "我的联系人" --send` |
 
-在终端的不回显提示中输入模型 API 密钥。非交互进程从 `WHALE_API_KEY` 读取；密钥不写入仓库。默认模型为 DeepSeek `deepseek-flash`；其他 OpenAI 兼容服务通过 `--base-url` 和 `--model` 指定。选中群的新消息及近期上下文会作为模型输入，服务商可能计费。启动后，在群里新发一条以「大肥鱼，」开头的文字，回复只显示在终端。按 `Ctrl+C` 停止。
+1. 先执行只读自检。群聊指定准确群名，私聊指定一位联系人的准确备注或昵称。同名联系人用唯一备注或稳定账号标识区分。两种检查模式均不调用模型或发送微信消息。
+2. 预览和正式发送均使用模型。默认模型是 DeepSeek `deepseek-flash`。其他 OpenAI 兼容服务使用 `--base-url` 和 `--model`。密钥从本机终端的不回显提示或 `WHALE_API_KEY` 输入。目标会话的新消息和近期上下文会交给所配的模型服务，经聊天参与者同意后开启。
+3. 预览中，群成员发送以「大肥鱼，」开头的新文本，或指定联系人向登录账号发一条新私聊。两种模式都从启动时的消息位置开始，登录账号自己发的消息不会触发回复。终端显示预览，`Ctrl+C` 停止。
+4. 正式发送前停止预览，在电脑版微信中把目标会话打开为独立聊天窗口。保持主窗口和目标窗口可见、输入框为空，通过发送前检查后执行正式发送。发送使用当前登录账号，未确认的发送不会自动重试。
 
-**开启发送**：停止预览，在电脑版微信中手动把该群打开为独立聊天窗口，保持主窗口和群窗口可见。
-
-```powershell
-.\.venv\Scripts\wechat-whale.exe --group "我的群名" --check-send
-.\.venv\Scripts\wechat-whale.exe --group "我的群名" --send
-```
-
-`--check-send` 只检查目标群窗口的身份和输入框，不发消息。客户端须能通过 Windows UI Automation 读取该群窗口的标识和空输入框。群名不唯一、群窗不可验证、输入框不可读或有草稿时，运行器拒绝发送。未确认的发送不自动重试。回复以当前登录的微信账号发出；同一 Windows 会话只运行一个实例，其他微信自动回复程序需先停止。预览和发送都调用模型，仅在群成员知情并同意后使用。程序启动时从最新消息开始，不补回离线消息。当前运行器只发文字；图片和表情以类型进入上下文，不做视觉识别。现有依赖下，普通微信 `@` 不作为可靠触发；请用「大肥鱼，」开头的文本。
+一个 Windows 桌面会话运行一个实例，每次指定一个群或一位联系人。停止当前实例后可切换。文字回复可发送，图片和表情以类型进入上下文。客户端需向 Windows UI Automation 提供可校验的目标窗口标识和可读的输入框。
 
 ## 核心库与离线演示
 

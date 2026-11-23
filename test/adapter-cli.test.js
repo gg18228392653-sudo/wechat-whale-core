@@ -49,6 +49,28 @@ test('prepare returns only routing fields and the existing redacted UTF-8 prompt
   assert.deepEqual(skipped.eligible, [])
 })
 
+test('private chats reply to the chosen contact without a mention and exclude other conversations', () => {
+  const contactId = 'fixture-selected-contact'
+  const input = { selfId, messages: [
+    { id: 'self', senderId: selfId, text: 'Earlier reply' },
+    { id: 'incoming', senderId: contactId, text: `Hello ${contactId}` },
+    { id: 'other', senderId: ownerAccountId, text: 'Unrelated current message', mentions: [selfId] },
+  ], historyRecords: [
+    { id: 'same-contact', senderId: contactId, text: 'Earlier incoming message' },
+    { id: 'other-history', senderId: ownerAccountId, text: 'Unrelated history' },
+  ] }
+  const prepared = result('prepare-private', { input, contactId })
+  assert.deepEqual(prepared.eligible, ['incoming'])
+  assert.equal(prepared.shouldReply, true)
+  assert.match(prepared.prompt, /【私聊数据】/u)
+  assert.match(prepared.prompt, /Earlier incoming message/u)
+  assert.doesNotMatch(prepared.prompt, /Unrelated|fixture-selected-contact|speakerIsOwner|【群聊数据】/u)
+  assert.deepEqual(result('reply', { message: prepared.prompt }), { reply: '' })
+  assert.deepEqual(result('reply', { message: '【私聊数据】' }), { reply: '' })
+  assert.equal(result('prepare-private', { input: { ...input, messages: [input.messages[0]] }, contactId }).shouldReply, false)
+  assert.equal(result('prepare-private', { input, contactId: selfId }).shouldReply, false)
+})
+
 test('reply uses the text boundary for plain and structured messages', () => {
   assert.deepEqual(result('reply', { message: ` ${syntheticText} ` }), { reply: syntheticText })
   assert.deepEqual(result('reply', { message: '[\u4e0d\u56de]' }), { reply: '' })

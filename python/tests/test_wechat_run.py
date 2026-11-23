@@ -1,3 +1,5 @@
+from contextlib import nullcontext, redirect_stderr
+import io
 import os
 import shutil
 import subprocess
@@ -6,11 +8,13 @@ import threading
 import unittest
 from functools import partial
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from wechat_whale_core.conversation_batch import collect_batch
-from wechat_whale_core.wechat_run import GroupLoop, arguments, core_call, session_lock
+from wechat_whale_core.wechat_run import GroupLoop, arguments, core_call, main, session_lock
 
 
 class FakeAdapter:
@@ -136,12 +140,48 @@ class GroupLoopTests(unittest.TestCase):
         self.assertEqual(self.prompts, [])
         self.assertEqual(self.adapter.sent, [])
 
+    def test_private_contact_replies_without_mention_and_ignores_own_messages(self):
+        self.adapter.chat_id = 'demo-member'
+        loop = self.loop(private=True, send=True)
+        self.adapter.add(21, 'My own message', sender=self.adapter.self_id)
+        self.assertTrue(loop.step())
+        self.assertEqual(self.prompts, [])
+        self.adapter.add(22, 'Hello in private')
+        self.assertTrue(loop.step())
+        self.assertFalse(loop.step())
+        self.assertEqual(self.adapter.sent, ['Demo reply'])
+        self.assertIn('【私聊数据】', self.prompts[0])
+        self.assertNotIn('【群聊数据】', self.prompts[0])
+
     def test_modes(self):
         args = arguments(['--group', 'Demo'])
         self.assertFalse(args.send)
         self.assertFalse(args.check)
         self.assertFalse(args.check_send)
         self.assertTrue(arguments(['--group', 'Demo', '--check-send']).check_send)
+        private = arguments(['--contact', 'Demo Contact', '--check'])
+        self.assertEqual(private.contact, 'Demo Contact')
+        self.assertIsNone(private.group)
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            arguments(['--group', 'Demo', '--contact', 'Demo Contact'])
+
+    def test_read_only_contact_checks_dispatch_without_model_or_send(self):
+        for mode in ('--check', '--check-send'):
+            with self.subTest(mode=mode), \
+                    patch('wechat_whale_core.wechat_adapter.WeChatAdapter') as adapter, \
+                    patch('wechat_whale_core.wechat_run.os', SimpleNamespace(name='nt', getenv=os.getenv)), \
+                    patch('wechat_whale_core.wechat_run.session_lock', return_value=nullcontext()), \
+                    patch('wechat_whale_core.wechat_run.getpass') as prompt, \
+                    patch('wechat_whale_core.chat_model.complete_chat') as complete, \
+                    patch('builtins.print'):
+                self.assertEqual(main(['--contact', 'Demo Contact', mode]), 0)
+                adapter.assert_called_once_with(contact='Demo Contact')
+                client = adapter.return_value
+                client.latest_sequence.assert_called_once_with()
+                self.assertEqual(client.check_send_ready.call_count, int(mode == '--check-send'))
+                client.send_text.assert_not_called()
+                prompt.assert_not_called()
+                complete.assert_not_called()
 
     def test_help_is_utf8_with_legacy_terminal_encoding(self):
         python_root = Path(__file__).resolve().parents[1]
@@ -149,7 +189,8 @@ class GroupLoopTests(unittest.TestCase):
         result = subprocess.run([sys.executable, '-B', '-m', 'wechat_whale_core.wechat_run', '--help'],
                                 cwd=python_root, env=env, capture_output=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr.decode('utf-8', errors='replace'))
-        self.assertIn('大肥鱼微信群聊', result.stdout.decode('utf-8'))
+        self.assertIn('大肥鱼微信聊天', result.stdout.decode('utf-8'))
+        self.assertIn(b'--contact', result.stdout)
         self.assertIn(b'--check-send', result.stdout)
 
     @unittest.skipUnless(sys.platform == 'win32', 'Windows named mutex')

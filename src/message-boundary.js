@@ -1,8 +1,8 @@
 import { field, isList, list } from './input.js'
-import { WHALE_PERSONA } from './persona.js'
+import { PRIVATE_PERSONA, WHALE_PERSONA } from './persona.js'
 
-const persona = WHALE_PERSONA.normalize('NFKC')
-const markers = /(?:[\[【]\s*不\s*回\s*[\]】]|【\s*(?:群聊数据|群聊历史|群聊记录|群聊隐私边界|可回应消息|本会话角色)\s*】|speakerIsOwner|账号已省略|只回应 eligible 中的当前记录|下面一行 JSON 是群聊数据)/iu
+const personas = [WHALE_PERSONA, PRIVATE_PERSONA].map(value => value.normalize('NFKC'))
+const markers = /(?:[\[【]\s*不\s*回\s*[\]】]|【\s*(?:群聊数据|群聊历史|群聊记录|群聊隐私边界|私聊数据|可回应消息|本会话角色)\s*】|speakerIsOwner|账号已省略|只回应 eligible 中的当前记录|下面一行 JSON 是群聊数据|下一行是私聊数据|只回复 eligible 所标的当前消息)/iu
 const promptKeys = ['history', 'current', 'eligible'].map(key => new RegExp(`"${key}"\\s*:\\s*\\[`, 'u'))
 const privateBlocks = new Set(['reasoning', 'thinking', 'commentary'])
 const MAX_BLOCKS = 64
@@ -11,7 +11,8 @@ const MAX_REPLY = 2000
 export function containsInternalOutput(value) {
   if (typeof value !== 'string') return false
   const normalized = value.normalize('NFKC').replace(/\p{Cf}/gu, '')
-  return markers.test(normalized) || normalized.includes(persona) || promptKeys.every(pattern => pattern.test(normalized))
+  return markers.test(normalized) || personas.some(value => normalized.includes(value)) ||
+    promptKeys.every(pattern => pattern.test(normalized))
 }
 
 function blocksText(message) {
